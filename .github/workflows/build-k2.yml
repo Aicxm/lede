@@ -1,0 +1,61 @@
+name: Build K2-MT7620 OpenWrt
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出Lede源码
+        uses: actions/checkout@v4
+
+      # 仅清理冗余预装文件释放磁盘，取消swap创建规避fallocate报错
+      - name: 扩容可用磁盘
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: 安装全套编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ack autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
+          mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools \
+          libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
+          vim wget xmlto xxd zlib1g-dev python3-setuptools
+
+      - name: 更新feeds插件源
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 生成斐讯K2基础默认配置
+        run: |
+          make defconfig CONFIG_TARGET=ramips/mt7620 CONFIG_TARGET_DEVICE=phicomm_psg1218
+
+      - name: 写入自定义微调配置
+        run: |
+          cat >> .config <<EOF
+CONFIG_LUCI_LIGHT=y
+CONFIG_LUCI_SSL_OPENSSL=y
+CONFIG_LUCI_LANG_ZH_HANS=y
+CONFIG_PACKAGE_kmod-mt76=y
+CONFIG_PACKAGE_luci-app-udpxy=y
+# 关闭passwall避免缺失依赖大量告警，需要可自行补齐feed依赖
+CONFIG_PACKAGE_luci-app-passwall=n
+EOF
+          make defconfig
+
+      - name: 预下载源码包
+        run: make download -j2 V=s
+
+      - name: 非交互模式编译固件
+        run: make -j2 V=s
+
+      - name: 上传成品固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: K2-MT7620-Firmware
+          path: bin/targets/ramips/mt7620/*.bin
